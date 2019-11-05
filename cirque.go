@@ -13,11 +13,11 @@ func NewCirque(parallelism int64, processor func(interface{}) interface{}) (chan
 	popSignal := sync.NewCond(&sync.Mutex{})
 	pushSignal := sync.NewCond(&sync.Mutex{})
 
-	var completeFlag int64 = 0 // not ideal, but we want an atomic variable without typecasts
+	var completeFlag int64 = 0 // ideally a boolean, but we want an atomic variable without typecasts
 	var leadingIndex int64 = 0
 	var followingIndex int64 = 0
 
-	go func() {
+	go func() { // process all the inputs
 		popSignal.L.Lock()
 		defer popSignal.L.Unlock()
 
@@ -34,7 +34,7 @@ func NewCirque(parallelism int64, processor func(interface{}) interface{}) (chan
 		aInc(&completeFlag)
 	}()
 
-	go func() {
+	go func() { // send outputs in order
 		pushSignal.L.Lock()
 		defer pushSignal.L.Unlock()
 
