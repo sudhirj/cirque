@@ -1,66 +1,79 @@
 package cirque
 
 import (
-	"log"
 	"sync"
 	"sync/atomic"
 	"time"
 )
 
-func NewCirque(parallelism int64, fun func(interface{}) interface{}) (chan<- interface{}, <-chan interface{}) {
-	in := make(chan interface{})
-	out := make(chan interface{})
-	results := sync.Map{}
-	done := make(chan struct{})
+func NewCirque(parallelism int64, processor func(interface{}) interface{}) (chan<- interface{}, <-chan interface{}) {
+	input := make(chan interface{})
+	output := make(chan interface{})
+
+	stagedResults := sync.Map{}
+	inFlight := sync.WaitGroup{}
 	popSignal := sync.NewCond(&sync.Mutex{})
 	pushSignal := sync.NewCond(&sync.Mutex{})
-	wg := sync.WaitGroup{}
+	finished := make(chan struct{})
+
 	var leadingIndex int64 = 0
 	var followingIndex int64 = 0
+
 	go func() {
-		for e := range in {
-			wg.Add(1)
-			popSignal.L.Lock()
-			for (atomic.LoadInt64(&leadingIndex) - atomic.LoadInt64(&followingIndex)) >= parallelism {
-				popSignal.Wait()
+		popSignal.L.Lock()
+		defer popSignal.L.Unlock()
+
+		for element := range input {
+			inFlight.Add(1)
+			for (aR(&leadingIndex) - aR(&followingIndex)) >= parallelism {
+				popSignal.Wait() // parallelism limit reached, wait until a pop happens
 			}
-			popSignal.L.Unlock()
-			go func(current int64, element interface{}) {
-				result := fun(element)
-				log.Println("STORING ", current)
-				results.Store(current, result)
-				pushSignal.Broadcast()
-			}(leadingIndex, e)
-			atomic.AddInt64(&leadingIndex, 1)
+			go func(current int64, currentElement interface{}) {
+				stagedResults.Store(current, processor(currentElement))
+				pushSignal.Broadcast() // store the result and broadcast a push event
+			}(leadingIndex, element)
+			aInc(&leadingIndex)
 		}
-		wg.Wait()
-		done <- struct{}{}
+
+		inFlight.Wait()
+		finished <- struct{}{}
 	}()
+
 	go func() {
+		pushSignal.L.Lock()
+		defer pushSignal.L.Unlock()
+
 		for {
 			select {
-			case <-time.After(time.Duration(0)):
-				pushSignal.L.Lock()
-				log.Println("CHECKING ", followingIndex)
-				log.Println("LEADING ", atomic.LoadInt64(&leadingIndex))
-				if value, ok := results.Load(followingIndex); ok {
-					log.Println("SENDING ", followingIndex)
-					out <- value
-					results.Delete(followingIndex)
-					atomic.AddInt64(&followingIndex, 1)
-					wg.Done()
-					popSignal.Broadcast()
+			case <-time.After(time.Duration(0)): // effectively an infinite loop, relies on the push event wait for holding
+				if value, ok := stagedResults.Load(followingIndex); ok {
+					output <- value
+
+					go stagedResults.Delete(followingIndex)
+					go inFlight.Done()
+					go popSignal.Broadcast()
+
+					aInc(&followingIndex)
+
 				} else {
-					if atomic.LoadInt64(&leadingIndex) > atomic.LoadInt64(&followingIndex) {
+					if aR(&leadingIndex) > aR(&followingIndex) { // wait for a push event if we still have work in progress
 						pushSignal.Wait()
 					}
 				}
-				pushSignal.L.Unlock()
-			case <-done:
-				close(out)
+			case <-finished:
+				close(output)
 				return
 			}
 		}
 	}()
-	return in, out
+
+	return input, output
+}
+
+func aInc(i *int64) int64 {
+	return atomic.AddInt64(i, 1)
+}
+
+func aR(i *int64) int64 {
+	return atomic.LoadInt64(i)
 }
