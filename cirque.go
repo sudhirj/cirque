@@ -3,7 +3,6 @@ package cirque
 import (
 	"sync"
 	"sync/atomic"
-	"time"
 )
 
 func NewCirque(parallelism int64, processor func(interface{}) interface{}) (chan<- interface{}, <-chan interface{}) {
@@ -11,11 +10,10 @@ func NewCirque(parallelism int64, processor func(interface{}) interface{}) (chan
 	output := make(chan interface{})
 
 	stagedResults := sync.Map{}
-	inFlight := sync.WaitGroup{}
 	popSignal := sync.NewCond(&sync.Mutex{})
 	pushSignal := sync.NewCond(&sync.Mutex{})
-	finished := make(chan struct{})
 
+	var completeFlag int64 = 0 // not ideal, but we want an atomic variable without typecasts
 	var leadingIndex int64 = 0
 	var followingIndex int64 = 0
 
@@ -24,7 +22,6 @@ func NewCirque(parallelism int64, processor func(interface{}) interface{}) (chan
 		defer popSignal.L.Unlock()
 
 		for element := range input {
-			inFlight.Add(1)
 			for (aR(&leadingIndex) - aR(&followingIndex)) >= parallelism {
 				popSignal.Wait() // parallelism limit reached, wait until a pop happens
 			}
@@ -34,35 +31,26 @@ func NewCirque(parallelism int64, processor func(interface{}) interface{}) (chan
 			}(leadingIndex, element)
 			aInc(&leadingIndex)
 		}
-
-		inFlight.Wait()
-		finished <- struct{}{}
+		aInc(&completeFlag)
 	}()
 
 	go func() {
 		pushSignal.L.Lock()
 		defer pushSignal.L.Unlock()
 
-		for {
-			select {
-			case <-time.After(time.Duration(0)): // effectively an infinite loop, relies on the push event wait for holding
-				if value, ok := stagedResults.Load(followingIndex); ok {
-					output <- value
-
-					go stagedResults.Delete(followingIndex)
-					go inFlight.Done()
-					go popSignal.Broadcast()
-
-					aInc(&followingIndex)
-
-				} else {
-					if aR(&leadingIndex) > aR(&followingIndex) { // wait for a push event if we still have work in progress
-						pushSignal.Wait()
-					}
-				}
-			case <-finished:
+		for { // infinite loop that relies on the push event wait for holding
+			if aR(&completeFlag) > 0 && aR(&followingIndex) == aR(&leadingIndex) {
+				// all inputs have been accepted and we've caught up on outputs
 				close(output)
 				return
+			}
+			if value, ok := stagedResults.Load(followingIndex); ok {
+				output <- value
+				go stagedResults.Delete(followingIndex) // clear the map behind us, keeps memory usage constant
+				go popSignal.Broadcast()
+				aInc(&followingIndex)
+			} else {
+				pushSignal.Wait()
 			}
 		}
 	}()
