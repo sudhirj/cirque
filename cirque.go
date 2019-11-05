@@ -5,6 +5,14 @@ import (
 	"sync/atomic"
 )
 
+// NewCirque creates a FIFO parallel queue that runs a given processor function on each job, similar to a parallel Map.
+//
+// The method accepts a parallelism number, which the maximum number of jobs that are processed simultaneously,
+// and a processor function that takes a job as input and returns a result as output. The processor function must be safe
+// to call from multiple goroutines.
+//
+// It returns two channels, one into which inputs can be passed, and one from which outputs can be read.
+// Closing the input channel will close the output channel after processing is complete.
 func NewCirque(parallelism int64, processor func(interface{}) interface{}) (chan<- interface{}, <-chan interface{}) {
 	input := make(chan interface{})
 	output := make(chan interface{})
