@@ -66,10 +66,12 @@ func NewCirque(parallelism int64, processor func(interface{}) interface{}) (chan
 	return input, output
 }
 
+// aInc atomically increments the given int
 func aInc(i *int64) int64 {
 	return atomic.AddInt64(i, 1)
 }
 
+// aR atomically reads the given int
 func aR(i *int64) int64 {
 	return atomic.LoadInt64(i)
 }
