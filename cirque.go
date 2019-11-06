@@ -12,7 +12,7 @@ import (
 // to call from multiple goroutines.
 //
 // It returns two channels, one into which inputs can be passed, and one from which outputs can be read.
-// Closing the input channel will close the output channel after processing is complete.
+// Closing the input channel will close the output channel after processing is complete. Do not close the output channel yourself.
 func NewCirque(parallelism int64, processor func(interface{}) interface{}) (chan<- interface{}, <-chan interface{}) {
 	input := make(chan interface{})
 	output := make(chan interface{})
@@ -29,16 +29,17 @@ func NewCirque(parallelism int64, processor func(interface{}) interface{}) (chan
 		popSignal.L.Lock()
 		defer popSignal.L.Unlock()
 
-		for element := range input {
+		for job := range input {
 			for (aR(&leadingIndex) - aR(&followingIndex)) >= parallelism {
 				popSignal.Wait() // parallelism limit reached, wait until a pop happens
 			}
-			go func(current int64, currentElement interface{}) {
-				stagedResults.Store(current, processor(currentElement))
+			go func(i int64, j interface{}) {
+				stagedResults.Store(i, processor(j))
 				pushSignal.Broadcast() // store the result and broadcast a push event
-			}(leadingIndex, element)
+			}(leadingIndex, job)
 			aInc(&leadingIndex)
 		}
+
 		aInc(&completeFlag)
 	}()
 
