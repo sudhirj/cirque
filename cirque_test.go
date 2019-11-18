@@ -10,37 +10,70 @@ import (
 )
 
 func TestCirque(t *testing.T) {
-	inputs := []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
-	expectedOutput := []int{2, 4, 6, 8, 10, 12, 14, 16, 18, 20}
+	for j := 0; j < 100; j++ {
+		inputs := []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
+		expectedOutput := []int{2, 4, 6, 8, 10, 12, 14, 16, 18, 20}
 
-	var measuredParallelism int64 = 0
+		var measuredParallelism int64 = 0
 
-	var maxParallelism int64 = 3
-	inputChannel, outputChannel := NewCirque(maxParallelism, func(i interface{}) interface{} {
-		atomic.AddInt64(&measuredParallelism, 1)
-		time.Sleep(time.Duration(rand.Int63n(100)) * time.Millisecond)
-		atomic.AddInt64(&measuredParallelism, -1)
-		return i.(int) * 2
-	})
+		var maxParallelism int64 = 3
+		inputChannel, outputChannel := NewCirque(maxParallelism, func(i interface{}) interface{} {
+			atomic.AddInt64(&measuredParallelism, 1)
+			time.Sleep(time.Duration(rand.Int63n(100)) * time.Millisecond)
+			atomic.AddInt64(&measuredParallelism, -1)
+			return i.(int) * 2
+		})
 
-	go func() {
-		for _, i := range inputs {
-			inputChannel <- i
-			if atomic.LoadInt64(&measuredParallelism) > maxParallelism {
-				t.Error("SO MUCH CANNOT ABLE TO HANDLE!")
+		go func() {
+			for _, i := range inputs {
+				inputChannel <- i
+				if atomic.LoadInt64(&measuredParallelism) > maxParallelism {
+					t.Error("SO MUCH CANNOT ABLE TO HANDLE!")
+				}
 			}
-		}
-		close(inputChannel)
-	}()
+			close(inputChannel)
+		}()
 
-	var actualOutput []int
-	for i := range outputChannel {
-		actualOutput = append(actualOutput, i.(int))
+		var actualOutput []int
+		for i := range outputChannel {
+			actualOutput = append(actualOutput, i.(int))
+		}
+		if !reflect.DeepEqual(expectedOutput, actualOutput) {
+			t.Error("WRONG WRONG WRONG")
+			t.Log(expectedOutput)
+			t.Log(actualOutput)
+		}
 	}
-	if !reflect.DeepEqual(expectedOutput, actualOutput) {
-		t.Error("WRONG WRONG WRONG")
-		t.Log(expectedOutput)
-		t.Log(actualOutput)
+}
+
+func TestCirqueNoInput(t *testing.T) {
+	for j := 0; j < 100; j++ {
+		inputs := []int{}
+
+		var measuredParallelism int64 = 0
+
+		var maxParallelism int64 = 3
+		inputChannel, outputChannel := NewCirque(maxParallelism, func(i interface{}) interface{} {
+			atomic.AddInt64(&measuredParallelism, 1)
+			time.Sleep(time.Duration(rand.Int63n(100)) * time.Millisecond)
+			atomic.AddInt64(&measuredParallelism, -1)
+			return i.(int) * 2
+		})
+
+		go func() {
+			for _, i := range inputs {
+				inputChannel <- i
+				if atomic.LoadInt64(&measuredParallelism) > maxParallelism {
+					t.Error("SO MUCH CANNOT ABLE TO HANDLE!")
+				}
+			}
+			close(inputChannel)
+		}()
+
+		var actualOutput []int
+		for i := range outputChannel {
+			actualOutput = append(actualOutput, i.(int))
+		}
 	}
 }
 
