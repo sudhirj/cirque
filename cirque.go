@@ -41,7 +41,7 @@ func NewCirque(parallelism int64, processor func(interface{}) interface{}) (chan
 			}(leadingIndex, job)
 			aInc(&leadingIndex)
 		}
-
+		pushSignal.Broadcast() // when input channel is empty, broadcast push event to close output channel
 		aInc(&completeFlag)
 		// This is to avoid race condition where output channel does not close.
 		for {

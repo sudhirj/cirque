@@ -65,7 +65,6 @@ func TestCirque(t *testing.T) {
 						cs.Desc, cs.ExpectedOutput, actualOutput)
 				}
 			}(c)
-		}
 	}
 	wg.Wait()
 }
