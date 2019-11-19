@@ -41,6 +41,7 @@ func NewCirque(parallelism int64, processor func(interface{}) interface{}) (chan
 		}
 
 		aInc(&completeFlag)
+		pushSignal.Broadcast()
 	}()
 
 	go func() { // send outputs in order
@@ -59,7 +60,9 @@ func NewCirque(parallelism int64, processor func(interface{}) interface{}) (chan
 				go popSignal.Broadcast()
 				aInc(&followingIndex)
 			} else {
-				pushSignal.Wait()
+				if aR(&completeFlag) == 0 {
+					pushSignal.Wait()
+				}
 			}
 		}
 	}()

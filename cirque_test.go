@@ -10,7 +10,7 @@ import (
 )
 
 func TestCirque(t *testing.T) {
-	for j := 0; j < 100; j++ {
+	for j := 0; j < 1000; j++ {
 		inputs := []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
 		expectedOutput := []int{2, 4, 6, 8, 10, 12, 14, 16, 18, 20}
 
@@ -19,7 +19,7 @@ func TestCirque(t *testing.T) {
 		var maxParallelism int64 = 3
 		inputChannel, outputChannel := NewCirque(maxParallelism, func(i interface{}) interface{} {
 			atomic.AddInt64(&measuredParallelism, 1)
-			time.Sleep(time.Duration(rand.Int63n(100)) * time.Millisecond)
+			time.Sleep(time.Duration(rand.Int63n(10)) * time.Millisecond)
 			atomic.AddInt64(&measuredParallelism, -1)
 			return i.(int) * 2
 		})
@@ -47,7 +47,7 @@ func TestCirque(t *testing.T) {
 }
 
 func TestCirqueNoInput(t *testing.T) {
-	for j := 0; j < 100; j++ {
+	for j := 0; j < 1000; j++ {
 		inputs := []int{}
 
 		var measuredParallelism int64 = 0
@@ -55,7 +55,7 @@ func TestCirqueNoInput(t *testing.T) {
 		var maxParallelism int64 = 3
 		inputChannel, outputChannel := NewCirque(maxParallelism, func(i interface{}) interface{} {
 			atomic.AddInt64(&measuredParallelism, 1)
-			time.Sleep(time.Duration(rand.Int63n(100)) * time.Millisecond)
+			time.Sleep(time.Duration(rand.Int63n(10)) * time.Millisecond)
 			atomic.AddInt64(&measuredParallelism, -1)
 			return i.(int) * 2
 		})
