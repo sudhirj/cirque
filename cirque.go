@@ -3,6 +3,7 @@ package cirque
 import (
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 // NewCirque creates a FIFO parallel queue that runs a given processor function on each job, similar to a parallel Map.
@@ -24,6 +25,7 @@ func NewCirque(parallelism int64, processor func(interface{}) interface{}) (chan
 	var completeFlag int64 = 0 // ideally a boolean, but we want an atomic variable without typecasts
 	var leadingIndex int64 = 0
 	var followingIndex int64 = 0
+	processingFinished := make(chan struct{})
 
 	go func() { // process all the inputs
 		popSignal.L.Lock()
@@ -41,6 +43,16 @@ func NewCirque(parallelism int64, processor func(interface{}) interface{}) (chan
 		}
 		pushSignal.Broadcast() // when input channel is empty, broadcast push event to close output channel
 		aInc(&completeFlag)
+		// This is to avoid race condition where output channel does not close.
+		for {
+			select {
+			case <-processingFinished:
+				return
+
+			case <-time.After(10 * time.Millisecond):
+				pushSignal.Broadcast()
+			}
+		}
 	}()
 
 	go func() { // send outputs in order
@@ -51,8 +63,10 @@ func NewCirque(parallelism int64, processor func(interface{}) interface{}) (chan
 			if aR(&completeFlag) > 0 && aR(&followingIndex) == aR(&leadingIndex) {
 				// all inputs have been accepted and we've caught up on outputs
 				close(output)
+				processingFinished <- struct{}{}
 				return
 			}
+
 			if value, ok := stagedResults.Load(followingIndex); ok {
 				output <- value
 				go stagedResults.Delete(followingIndex) // clear the map behind us, keeps memory usage constant
