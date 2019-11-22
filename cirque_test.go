@@ -11,21 +11,21 @@ import (
 )
 
 type testCase struct {
-	Input          []int
-	ExpectedOutput []int
-	Desc           string
+	input          []int
+	expectedOutput []int
+	description    string
 }
 
 var cases = []testCase{
 	{
-		Input:          []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10},
-		ExpectedOutput: []int{2, 4, 6, 8, 10, 12, 14, 16, 18, 20},
-		Desc:           "Computation check",
+		input:          []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10},
+		expectedOutput: []int{2, 4, 6, 8, 10, 12, 14, 16, 18, 20},
+		description:    "Computation check",
 	},
 	{
-		Input:          []int{},
-		ExpectedOutput: []int{},
-		Desc:           "Empty Channel check",
+		input:          []int{},
+		expectedOutput: []int{},
+		description:    "Empty Channel check",
 	},
 }
 
@@ -47,7 +47,7 @@ func TestCirque(t *testing.T) {
 				})
 
 				go func() {
-					for _, i := range cs.Input {
+					for _, i := range cs.input {
 						inputChannel <- i
 						if atomic.LoadInt64(&measuredParallelism) > maxParallelism {
 							t.Error("SO MUCH CANNOT ABLE TO HANDLE!")
@@ -60,15 +60,15 @@ func TestCirque(t *testing.T) {
 				for i := range outputChannel {
 					actualOutput = append(actualOutput, i.(int))
 				}
-				if len(cs.ExpectedOutput) > 0 && !reflect.DeepEqual(cs.ExpectedOutput, actualOutput) {
+				if len(cs.expectedOutput) > 0 && !reflect.DeepEqual(cs.expectedOutput, actualOutput) {
 					t.Errorf("WRONG WRONG WRONG. Case: %s \n Expected: %v, Actual: %v,",
-						cs.Desc, cs.ExpectedOutput, actualOutput)
+						cs.description, cs.expectedOutput, actualOutput)
 				}
 			}(c)
+		}
+		wg.Wait()
 	}
-	wg.Wait()
 }
-
 func ExampleNewCirque() {
 	inputs := []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
 
