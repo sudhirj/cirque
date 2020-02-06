@@ -37,6 +37,7 @@ func TestCirque(t *testing.T) {
 			go func(cs testCase) {
 				defer wg.Done()
 				var measuredParallelism int64 = 0
+				var wipCount int64 = 0
 
 				var maxParallelism int64 = 3
 				inputChannel, outputChannel := NewCirque(maxParallelism, func(i interface{}) interface{} {
@@ -48,9 +49,15 @@ func TestCirque(t *testing.T) {
 
 				go func() {
 					for _, i := range cs.input {
+						atomic.AddInt64(&wipCount, 1)
+
 						inputChannel <- i
+
 						if atomic.LoadInt64(&measuredParallelism) > maxParallelism {
 							t.Error("SO MUCH CANNOT ABLE TO HANDLE!")
+						}
+						if atomic.LoadInt64(&wipCount) > maxParallelism*2 {
+							t.Error("NO BACKPRESSURE!", maxParallelism, atomic.LoadInt64(&wipCount))
 						}
 					}
 					close(inputChannel)
@@ -58,6 +65,7 @@ func TestCirque(t *testing.T) {
 
 				var actualOutput []int
 				for i := range outputChannel {
+					atomic.AddInt64(&wipCount, -1)
 					actualOutput = append(actualOutput, i.(int))
 				}
 				if len(cs.expectedOutput) > 0 && !reflect.DeepEqual(cs.expectedOutput, actualOutput) {

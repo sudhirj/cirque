@@ -22,35 +22,44 @@ func NewCirque(parallelism int64, processor func(interface{}) interface{}) (chan
 	output := make(chan interface{})
 
 	processedJobs := make(chan indexedValue)
+	processedSignal := make(chan struct{}, parallelism)
 	go func() { // process inputs
-		wg := sync.WaitGroup{}
-		splitter := make(chan indexedValue)
+		poolWaiter := sync.WaitGroup{}
+		pool := make(chan indexedValue)
 
 		// Start worker pool of specified size
 		for workerID := int64(0); workerID < parallelism; workerID++ {
+			poolWaiter.Add(1)
 			go func() {
-				for job := range splitter {
+				for job := range pool {
 					processedJobs <- indexedValue{
 						value: processor(job.value),
 						index: job.index,
 					}
-					wg.Done()
 				}
+				poolWaiter.Done()
 			}()
 		}
 
 		index := int64(0)
+		countInProgress := int64(0)
 		for job := range input {
-			wg.Add(1)
-			splitter <- indexedValue{
+			pool <- indexedValue{
 				value: job,
 				index: index,
 			}
 			index = index + 1
-		}
-		close(splitter)
+			countInProgress = countInProgress + 1
 
-		wg.Wait()
+			for countInProgress > parallelism {
+				<-processedSignal
+				countInProgress = countInProgress - 1
+			}
+
+		}
+		close(pool)
+
+		poolWaiter.Wait()
 		close(processedJobs)
 	}()
 
@@ -65,12 +74,14 @@ func NewCirque(parallelism int64, processor func(interface{}) interface{}) (chan
 					output <- storedResult.value
 					delete(storedResults, storedResult.index)
 					nextIndex = nextIndex + 1
+					processedSignal <- struct{}{}
 				} else {
 					canSend = false
 				}
 			}
 		}
 		close(output)
+		close(processedSignal)
 	}()
 
 	return input, output
