@@ -57,6 +57,7 @@ func TestCirque(t *testing.T) {
 							t.Error("SO MUCH CANNOT ABLE TO HANDLE!")
 						}
 						if atomic.LoadInt64(&wipCount) > maxParallelism*2 {
+							// Twice max parallelism because we can have jobs running, and the same number waiting for output transfer
 							t.Error("NO BACKPRESSURE!", maxParallelism, atomic.LoadInt64(&wipCount))
 						}
 					}
