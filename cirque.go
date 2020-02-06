@@ -42,18 +42,18 @@ func NewCirque(parallelism int64, processor func(interface{}) interface{}) (chan
 		}
 
 		index := int64(0)
-		countInProgress := int64(0)
+		inProgressCount := int64(0)
 		for job := range input {
 			pool <- indexedValue{
 				value: job,
 				index: index,
 			}
 			index = index + 1
-			countInProgress = countInProgress + 1
+			inProgressCount = inProgressCount + 1
 
-			for countInProgress > parallelism {
+			for inProgressCount > parallelism {
 				<-processedSignal
-				countInProgress = countInProgress - 1
+				inProgressCount = inProgressCount - 1
 			}
 
 		}
