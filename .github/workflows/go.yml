@@ -28,4 +28,4 @@ jobs:
       
 
     - name: Run Tests  
-      run: go test .
+      run: go test . --race
