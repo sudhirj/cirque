@@ -22,7 +22,7 @@ func NewCirque(parallelism int64, processor func(interface{}) interface{}) (chan
 	output := make(chan interface{})
 
 	processedJobs := make(chan indexedValue)
-	processedSignal := make(chan struct{}, parallelism)
+	semaphore := make(chan struct{}, parallelism)
 	go func() { // process inputs
 		poolWaiter := sync.WaitGroup{}
 		pool := make(chan indexedValue)
@@ -42,21 +42,13 @@ func NewCirque(parallelism int64, processor func(interface{}) interface{}) (chan
 		}
 
 		index := int64(0)
-		inFlightCount := int64(0)
 		for job := range input {
 			pool <- indexedValue{
 				value: job,
 				index: index,
 			}
 			index = index + 1
-			inFlightCount = inFlightCount + 1
-
-			// Check if we have too many inflight jobs, and wait until one has finished
-			for inFlightCount > parallelism {
-				<-processedSignal
-				inFlightCount = inFlightCount - 1
-			}
-
+			semaphore <- struct{}{}
 		}
 		close(pool)
 
@@ -75,14 +67,13 @@ func NewCirque(parallelism int64, processor func(interface{}) interface{}) (chan
 					output <- storedResult.value
 					delete(storedResults, storedResult.index)
 					nextIndex = nextIndex + 1
-					processedSignal <- struct{}{}
+					<-semaphore
 				} else {
 					canSend = false
 				}
 			}
 		}
 		close(output)
-		close(processedSignal)
 	}()
 
 	return input, output
