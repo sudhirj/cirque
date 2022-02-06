@@ -18,9 +18,9 @@ jobs:
     - name: Build
       run: go build
       env:
-        GOPATH: /home/runner/work/cirque/go
+        GOPATH: /home/runner/work/cirque/cirque/go
 
     - name: Run Tests  
       run: go test --race
       env:
-        GOPATH: /home/runner/work/cirque/go
+        GOPATH: /home/runner/work/cirque/cirque/go
