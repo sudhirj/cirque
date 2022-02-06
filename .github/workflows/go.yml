@@ -18,10 +18,6 @@ jobs:
 
     - name: Build
       run: go build
-      env:
-        GOPATH: /home/runner/go
 
     - name: Run Tests  
       run: go test --race
-      env:
-        GOPATH: /home/runner/go
