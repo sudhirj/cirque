@@ -4,11 +4,6 @@ import (
 	"sync"
 )
 
-type indexedValue struct {
-	value interface{}
-	index int64
-}
-
 // NewCirque creates a FIFO parallel queue that runs a given processor function on each job, similar to a parallel Map.
 //
 // The method accepts a parallelism number, which the maximum number of jobs that are processed simultaneously,
@@ -17,25 +12,42 @@ type indexedValue struct {
 //
 // It returns two channels, one into which inputs can be passed, and one from which outputs can be read.
 // Closing the input channel will close the output channel after processing is complete. Do not close the output channel yourself.
-func NewCirque(parallelism int64, processor func(interface{}) interface{}) (chan<- interface{}, <-chan interface{}) {
-	input := make(chan interface{})
-	output := make(chan interface{})
+func NewCirque[I any, O any](parallelism int64, processor func(I) O) (chan<- I, <-chan O) {
+	input := make(chan I)
+	output := make(chan O)
 
-	processedJobs := make(chan indexedValue)
+	inputHolder := make(map[int64]I)
+	outputHolder := make(map[int64]O)
+
+	inputLock := sync.RWMutex{}
+	outputLock := sync.RWMutex{}
+
+	processedJobs := make(chan int64)
 	semaphore := make(chan struct{}, parallelism)
 	go func() { // process inputs
 		poolWaiter := sync.WaitGroup{}
-		pool := make(chan indexedValue)
+		pool := make(chan int64)
 
 		// Start worker pool of specified size
 		for workerID := int64(0); workerID < parallelism; workerID++ {
 			poolWaiter.Add(1)
 			go func() {
-				for job := range pool {
-					processedJobs <- indexedValue{
-						value: processor(job.value),
-						index: job.index,
-					}
+				for index := range pool {
+					inputLock.RLock()
+					input := inputHolder[index]
+					inputLock.RUnlock()
+
+					output := processor(input)
+
+					outputLock.Lock()
+					outputHolder[index] = output
+					outputLock.Unlock()
+
+					inputLock.Lock()
+					delete(inputHolder, index)
+					inputLock.Unlock()
+
+					processedJobs <- index
 				}
 				poolWaiter.Done()
 			}()
@@ -43,10 +55,11 @@ func NewCirque(parallelism int64, processor func(interface{}) interface{}) (chan
 
 		index := int64(0)
 		for job := range input {
-			pool <- indexedValue{
-				value: job,
-				index: index,
-			}
+			inputLock.Lock()
+			inputHolder[index] = job
+			inputLock.Unlock()
+
+			pool <- index
 			index = index + 1
 			semaphore <- struct{}{}
 		}
@@ -58,14 +71,20 @@ func NewCirque(parallelism int64, processor func(interface{}) interface{}) (chan
 
 	go func() { // send outputs in order
 		nextIndex := int64(0)
-		storedResults := map[int64]indexedValue{}
-		for res := range processedJobs {
-			storedResults[res.index] = res
+		for range processedJobs {
 			canSend := true
 			for canSend {
-				if storedResult, ok := storedResults[nextIndex]; ok {
-					output <- storedResult.value
-					delete(storedResults, storedResult.index)
+				outputLock.RLock()
+				storedResult, ok := outputHolder[nextIndex]
+				outputLock.RUnlock()
+
+				if ok {
+					output <- storedResult
+
+					outputLock.Lock()
+					delete(outputHolder, nextIndex)
+					outputLock.Unlock()
+
 					nextIndex = nextIndex + 1
 					<-semaphore
 				} else {
