@@ -4,9 +4,9 @@ A circular queue that processes jobs in parallel but returns results in FIFO.
 ```go
 inputs := []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
 
-inputChannel, outputChannel := NewCirque(3, func(i interface{}) interface{} {
+inputChannel, outputChannel := NewCirque(3, func(i int) int {
     time.Sleep(time.Duration(rand.Int63n(100)) * time.Millisecond)
-    return i.(int) * 2
+    return i * 2
 })
 
 go func() {
@@ -18,7 +18,7 @@ go func() {
 
 var output []int
 for i := range outputChannel {
-    output = append(output, i.(int))
+    output = append(output, i)
 }
 fmt.Println(output)
 
