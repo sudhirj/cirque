@@ -4,96 +4,101 @@ import (
 	"sync"
 )
 
-// NewCirque creates a FIFO parallel queue that runs a given processor function on each job, similar to a parallel Map.
+// NewCirque creates a FIFO parallel queue that runs a given
+// processor function on each job, similar to a parallel Map.
 //
-// The method accepts a parallelism number, which the maximum number of jobs that are processed simultaneously,
-// and a processor function that takes a job as input and returns a indexedValue as output. The processor function must be safe
+// The method accepts a parallelism number, which the maximum
+// number of jobs that are processed simultaneously,
+// and a processor function that takes an input and returns
+// an output. The processor function must be safe
 // to call from multiple goroutines.
 //
-// It returns two channels, one into which inputs can be passed, and one from which outputs can be read.
-// Closing the input channel will close the output channel after processing is complete. Do not close the output channel yourself.
+// It returns two channels, one into which inputs can be passed,
+// and one from which outputs can be read. Closing the input channel
+// will close the output channel after processing is complete. Do not
+// close the output channel yourself.
 func NewCirque[I any, O any](parallelism int64, processor func(I) O) (chan<- I, <-chan O) {
-	input := make(chan I)
-	output := make(chan O)
+	inputChannel := make(chan I)
+	outputChannel := make(chan O)
 
 	inputHolder := make(map[int64]I)
 	outputHolder := make(map[int64]O)
 
-	inputLock := sync.RWMutex{}
-	outputLock := sync.RWMutex{}
+	inputHolderLock := sync.RWMutex{}
+	outputHolderLock := sync.RWMutex{}
 
-	processedJobs := make(chan int64)
-	semaphore := make(chan struct{}, parallelism)
+	processedSignal := make(chan struct{})
+	parallelismSemaphore := make(chan struct{}, parallelism)
+
 	go func() { // process inputs
-		poolWaiter := sync.WaitGroup{}
-		pool := make(chan int64)
+		inflightInputs := sync.WaitGroup{}
+		inputPool := make(chan int64)
 
 		// Start worker pool of specified size
-		for workerID := int64(0); workerID < parallelism; workerID++ {
-			poolWaiter.Add(1)
+		for n := int64(0); n < parallelism; n++ {
+			inflightInputs.Add(1)
 			go func() {
-				for index := range pool {
-					inputLock.RLock()
+				for index := range inputPool {
+					inputHolderLock.RLock()
 					input := inputHolder[index]
-					inputLock.RUnlock()
+					inputHolderLock.RUnlock()
 
 					output := processor(input)
 
-					outputLock.Lock()
+					outputHolderLock.Lock()
 					outputHolder[index] = output
-					outputLock.Unlock()
+					outputHolderLock.Unlock()
 
-					inputLock.Lock()
+					inputHolderLock.Lock()
 					delete(inputHolder, index)
-					inputLock.Unlock()
+					inputHolderLock.Unlock()
 
-					processedJobs <- index
+					processedSignal <- struct{}{}
 				}
-				poolWaiter.Done()
+				inflightInputs.Done()
 			}()
 		}
 
 		index := int64(0)
-		for job := range input {
-			inputLock.Lock()
-			inputHolder[index] = job
-			inputLock.Unlock()
+		for input := range inputChannel {
+			inputHolderLock.Lock()
+			inputHolder[index] = input
+			inputHolderLock.Unlock()
 
-			pool <- index
-			index = index + 1
-			semaphore <- struct{}{}
+			inputPool <- index
+			index++
+			parallelismSemaphore <- struct{}{}
 		}
-		close(pool)
+		close(inputPool)
 
-		poolWaiter.Wait()
-		close(processedJobs)
+		inflightInputs.Wait()
+		close(processedSignal)
 	}()
 
 	go func() { // send outputs in order
 		nextIndex := int64(0)
-		for range processedJobs {
-			canSend := true
-			for canSend {
-				outputLock.RLock()
-				storedResult, ok := outputHolder[nextIndex]
-				outputLock.RUnlock()
+		for range processedSignal {
+			for true {
+				outputHolderLock.RLock()
+				output, ok := outputHolder[nextIndex]
+				outputHolderLock.RUnlock()
 
 				if ok {
-					output <- storedResult
+					outputChannel <- output
 
-					outputLock.Lock()
+					outputHolderLock.Lock()
 					delete(outputHolder, nextIndex)
-					outputLock.Unlock()
+					outputHolderLock.Unlock()
 
-					nextIndex = nextIndex + 1
-					<-semaphore
+					nextIndex++
+					<-parallelismSemaphore
 				} else {
-					canSend = false
+					break
 				}
 			}
 		}
-		close(output)
+		close(outputChannel)
 	}()
 
-	return input, output
+	return inputChannel, outputChannel
 }
