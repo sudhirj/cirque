@@ -27,8 +27,14 @@ func NewCirque[I any, O any](parallelism int64, processor func(I) O) (chan<- I, 
 	inputHolderLock := sync.RWMutex{}
 	outputHolderLock := sync.RWMutex{}
 
-	processedSignal := make(chan struct{})
-	parallelismSemaphore := make(chan struct{}, parallelism)
+	// let the output goroutine know every time an input is processed, so it
+	// can wake up and try to send outputs
+	processCompletionSignal := make(chan struct{})
+
+	// apply backpressure to make sure we're processing inputs only when outputs are
+	// actually being collected - otherwise we're going to fill up memory with processed
+	// jobs that aren't being taken out.
+	outputBackpressureSignal := make(chan struct{}, parallelism)
 
 	go func() { // process inputs
 		inflightInputs := sync.WaitGroup{}
@@ -53,7 +59,7 @@ func NewCirque[I any, O any](parallelism int64, processor func(I) O) (chan<- I, 
 					delete(inputHolder, index)
 					inputHolderLock.Unlock()
 
-					processedSignal <- struct{}{}
+					processCompletionSignal <- struct{}{}
 				}
 				inflightInputs.Done()
 			}()
@@ -67,17 +73,17 @@ func NewCirque[I any, O any](parallelism int64, processor func(I) O) (chan<- I, 
 
 			inputPool <- index
 			index++
-			parallelismSemaphore <- struct{}{}
+			outputBackpressureSignal <- struct{}{}
 		}
 		close(inputPool)
 
 		inflightInputs.Wait()
-		close(processedSignal)
+		close(processCompletionSignal)
 	}()
 
 	go func() { // send outputs in order
 		nextIndex := int64(0)
-		for range processedSignal {
+		for range processCompletionSignal {
 			for true {
 				outputHolderLock.RLock()
 				output, ok := outputHolder[nextIndex]
@@ -91,7 +97,7 @@ func NewCirque[I any, O any](parallelism int64, processor func(I) O) (chan<- I, 
 					outputHolderLock.Unlock()
 
 					nextIndex++
-					<-parallelismSemaphore
+					<-outputBackpressureSignal
 				} else {
 					break
 				}
