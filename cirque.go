@@ -21,11 +21,8 @@ func NewCirque[I any, O any](parallelism int64, processor func(I) O) (chan<- I, 
 	inputChannel := make(chan I)
 	outputChannel := make(chan O)
 
-	inputHolder := make(map[int64]I)
-	outputHolder := make(map[int64]O)
-
-	inputHolderLock := sync.RWMutex{}
-	outputHolderLock := sync.RWMutex{}
+	inputHolder := NewSyncMap[int64, I]()
+	outputHolder := NewSyncMap[int64, O]()
 
 	// let the output goroutine know every time an input is processed, so it
 	// can wake up and try to send outputs
@@ -45,20 +42,9 @@ func NewCirque[I any, O any](parallelism int64, processor func(I) O) (chan<- I, 
 			inflightInputs.Add(1)
 			go func() {
 				for index := range inputPool {
-					inputHolderLock.RLock()
-					input := inputHolder[index]
-					inputHolderLock.RUnlock()
-
-					output := processor(input)
-
-					outputHolderLock.Lock()
-					outputHolder[index] = output
-					outputHolderLock.Unlock()
-
-					inputHolderLock.Lock()
-					delete(inputHolder, index)
-					inputHolderLock.Unlock()
-
+					input, _ := inputHolder.Get(index)
+					outputHolder.Set(index, processor(input))
+					inputHolder.Delete(index)
 					processCompletionSignal <- struct{}{}
 				}
 				inflightInputs.Done()
@@ -67,10 +53,7 @@ func NewCirque[I any, O any](parallelism int64, processor func(I) O) (chan<- I, 
 
 		index := int64(0)
 		for input := range inputChannel {
-			inputHolderLock.Lock()
-			inputHolder[index] = input
-			inputHolderLock.Unlock()
-
+			inputHolder.Set(index, input)
 			inputPool <- index
 			index++
 			outputBackpressureSignal <- struct{}{}
@@ -85,17 +68,9 @@ func NewCirque[I any, O any](parallelism int64, processor func(I) O) (chan<- I, 
 		nextIndex := int64(0)
 		for range processCompletionSignal {
 			for true {
-				outputHolderLock.RLock()
-				output, ok := outputHolder[nextIndex]
-				outputHolderLock.RUnlock()
-
-				if ok {
+				if output, ok := outputHolder.Get(nextIndex); ok {
 					outputChannel <- output
-
-					outputHolderLock.Lock()
-					delete(outputHolder, nextIndex)
-					outputHolderLock.Unlock()
-
+					outputHolder.Delete(nextIndex)
 					nextIndex++
 					<-outputBackpressureSignal
 				} else {
