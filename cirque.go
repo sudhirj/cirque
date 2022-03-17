@@ -4,77 +4,82 @@ import (
 	"sync"
 )
 
-type indexedValue struct {
-	value interface{}
-	index int64
-}
-
-// NewCirque creates a FIFO parallel queue that runs a given processor function on each job, similar to a parallel Map.
+// NewCirque creates a FIFO parallel queue that runs a given
+// processor function on each job, similar to a parallel Map.
 //
-// The method accepts a parallelism number, which the maximum number of jobs that are processed simultaneously,
-// and a processor function that takes a job as input and returns a indexedValue as output. The processor function must be safe
+// The method accepts a parallelism number, which the maximum
+// number of jobs that are processed simultaneously,
+// and a processor function that takes an input and returns
+// an output. The processor function must be safe
 // to call from multiple goroutines.
 //
-// It returns two channels, one into which inputs can be passed, and one from which outputs can be read.
-// Closing the input channel will close the output channel after processing is complete. Do not close the output channel yourself.
-func NewCirque(parallelism int64, processor func(interface{}) interface{}) (chan<- interface{}, <-chan interface{}) {
-	input := make(chan interface{})
-	output := make(chan interface{})
+// It returns two channels, one into which inputs can be passed,
+// and one from which outputs can be read. Closing the input channel
+// will close the output channel after processing is complete. Do not
+// close the output channel yourself.
+func NewCirque[I any, O any](parallelism int64, processor func(I) O) (chan<- I, <-chan O) {
+	inputChannel := make(chan I)
+	outputChannel := make(chan O)
 
-	processedJobs := make(chan indexedValue)
-	semaphore := make(chan struct{}, parallelism)
+	inputHolder := NewSyncMap[int64, I]()
+	outputHolder := NewSyncMap[int64, O]()
+
+	// let the output goroutine know every time an input is processed, so it
+	// can wake up and try to send outputs
+	processCompletionSignal := make(chan struct{})
+
+	// apply backpressure to make sure we're processing inputs only when outputs are
+	// actually being collected - otherwise we're going to fill up memory with processed
+	// jobs that aren't being taken out.
+	outputBackpressureSignal := make(chan struct{}, parallelism)
+
 	go func() { // process inputs
-		poolWaiter := sync.WaitGroup{}
-		pool := make(chan indexedValue)
+		inflightInputs := sync.WaitGroup{}
+		inputPool := make(chan int64)
 
 		// Start worker pool of specified size
-		for workerID := int64(0); workerID < parallelism; workerID++ {
-			poolWaiter.Add(1)
+		for n := int64(0); n < parallelism; n++ {
+			inflightInputs.Add(1)
 			go func() {
-				for job := range pool {
-					processedJobs <- indexedValue{
-						value: processor(job.value),
-						index: job.index,
-					}
+				for index := range inputPool {
+					input, _ := inputHolder.Get(index)
+					outputHolder.Set(index, processor(input))
+					inputHolder.Delete(index)
+					processCompletionSignal <- struct{}{}
 				}
-				poolWaiter.Done()
+				inflightInputs.Done()
 			}()
 		}
 
 		index := int64(0)
-		for job := range input {
-			pool <- indexedValue{
-				value: job,
-				index: index,
-			}
-			index = index + 1
-			semaphore <- struct{}{}
+		for input := range inputChannel {
+			inputHolder.Set(index, input)
+			inputPool <- index
+			index++
+			outputBackpressureSignal <- struct{}{}
 		}
-		close(pool)
+		close(inputPool)
 
-		poolWaiter.Wait()
-		close(processedJobs)
+		inflightInputs.Wait()
+		close(processCompletionSignal)
 	}()
 
 	go func() { // send outputs in order
 		nextIndex := int64(0)
-		storedResults := map[int64]indexedValue{}
-		for res := range processedJobs {
-			storedResults[res.index] = res
-			canSend := true
-			for canSend {
-				if storedResult, ok := storedResults[nextIndex]; ok {
-					output <- storedResult.value
-					delete(storedResults, storedResult.index)
-					nextIndex = nextIndex + 1
-					<-semaphore
+		for range processCompletionSignal {
+			for true {
+				if output, ok := outputHolder.Get(nextIndex); ok {
+					outputChannel <- output
+					outputHolder.Delete(nextIndex)
+					nextIndex++
+					<-outputBackpressureSignal
 				} else {
-					canSend = false
+					break
 				}
 			}
 		}
-		close(output)
+		close(outputChannel)
 	}()
 
-	return input, output
+	return inputChannel, outputChannel
 }
